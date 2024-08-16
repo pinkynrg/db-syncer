@@ -29,7 +29,7 @@
 
    Create a `.env-*` file in the `envs` directory for each environment. For example `.env-test-1`:
 
-   ```bash
+   ```
     LOCAL_POSTGRES_USER=local_user
     LOCAL_POSTGRES_PASSWORD=local_password
     LOCAL_POSTGRES_DB=local_db
@@ -37,7 +37,7 @@
     REMOTE_POSTGRES_USER=remote_user
     REMOTE_POSTGRES_PASSWORD=remote_password
     REMOTE_POSTGRES_DB=remote_db
-  ```
+   ```
 
 3. **Run the Script** ▶️:
 
