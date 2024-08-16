@@ -1,22 +1,13 @@
-<!-- ⚠️ This README has been generated from the file(s) "blueprint.md" ⚠️-->
-[![-----------------------------------------------------](https://raw.githubusercontent.com/andreasbm/readme/master/assets/lines/colored.png)](#db-syncer-)
-
-# ➤ db-syncer 🚀
+# db-syncer 🚀
 
 `db-syncer` is a shell script that automates the synchronization of PostgreSQL databases using Docker Compose. It dynamically generates a `docker-compose.yml` file based on environment-specific configurations and syncs remote PostgreSQL databases into local instances.
 
-
-[![-----------------------------------------------------](https://raw.githubusercontent.com/andreasbm/readme/master/assets/lines/colored.png)](#prerequisites-)
-
-## ➤ Prerequisites 🛠️
+## Prerequisites 🛠️
 
 - **Docker**: Ensure Docker is installed.
 - **Docker Compose**: Ensure Docker Compose is installed.
 
-
-[![-----------------------------------------------------](https://raw.githubusercontent.com/andreasbm/readme/master/assets/lines/colored.png)](#quick-start-)
-
-## ➤ Quick Start ⚡
+## Quick Start ⚡
 
 1. **Clone the Repository** 📥:
 
