@@ -40,24 +40,26 @@
     REMOTE_POSTGRES_DB=remote_db
    ```
 
+   The environment name is derived from the file name without the `.env-` prefix. In this case, the environment name is `test-1`.
+
 3. **Run the Script** ▶️:
 
    Sync a specific environment (pulls remote DB into local PostgreSQL):
 
    ```bash
-   ./db-syncer sync evaluator
+   ./db-syncer sync test-1
    ```
 
    Start an environment's PostgreSQL server (uses previously synced data):
 
    ```bash
-   ./db-syncer start evaluator
+   ./db-syncer start test-1
    ```
 
    Stop an environment's PostgreSQL server:
 
    ```bash
-   ./db-syncer stop evaluator
+   ./db-syncer stop test-1
    ```
 
    Check which environments are running:
