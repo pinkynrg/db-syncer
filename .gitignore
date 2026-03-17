@@ -1,2 +1,3 @@
 envs/.env*
-docker-compose.yml
+compose/
+.DS_Store

@@ -1,0 +1,303 @@
+#!/bin/bash
+
+# Define local PostgreSQL root user credentials
+LOCAL_ROOT_USER="root"
+LOCAL_ROOT_PASSWORD="root"
+
+# Define paths
+ENVS_DIR="envs"
+COMPOSE_DIR="compose"
+
+# --- Helpers ---
+
+require_env() {
+  local CMD="$1"
+  local TARGET_ENV="$2"
+  if [ -z "$TARGET_ENV" ]; then
+    echo "Error: Please specify an environment."
+    echo "Usage: ./db-syncer $CMD <env>"
+    echo ""
+    list_envs
+    exit 1
+  fi
+  ENV_FILE="$ENVS_DIR/.env-$TARGET_ENV"
+  if [ ! -f "$ENV_FILE" ]; then
+    echo "Error: Environment file $ENV_FILE not found."
+    echo ""
+    list_envs
+    exit 1
+  fi
+}
+
+list_envs() {
+  echo "Available environments:"
+  for f in $ENVS_DIR/.env-*; do
+    [ -f "$f" ] || continue
+    echo "  $(basename "$f" | sed 's/\.env-//')"
+  done
+}
+
+source_env_file() {
+  local TARGET_ENV="$1"
+  set -a
+  source "$ENVS_DIR/.env-$TARGET_ENV"
+  set +a
+
+  if [ -z "$LOCAL_PORT" ]; then
+    echo "Error: LOCAL_PORT is not defined in $ENVS_DIR/.env-$TARGET_ENV"
+    exit 1
+  fi
+}
+
+compose_file_for() {
+  echo "$COMPOSE_DIR/docker-compose-$1.yml"
+}
+
+project_name_for() {
+  echo "db-syncer-$1"
+}
+
+# --- Docker Compose generation ---
+
+generate_compose_start() {
+  local ENV_NAME="$1"
+  local FILE
+  FILE=$(compose_file_for "$ENV_NAME")
+
+  mkdir -p "$COMPOSE_DIR"
+
+  cat <<EOF > "$FILE"
+# Generated docker-compose file for $ENV_NAME
+services:
+  postgresql_$ENV_NAME:
+    image: postgres:latest
+    environment:
+      POSTGRES_USER: $LOCAL_POSTGRES_USER
+      POSTGRES_PASSWORD: $LOCAL_POSTGRES_PASSWORD
+      POSTGRES_DB: $LOCAL_POSTGRES_DB
+    ports:
+      - "$LOCAL_PORT:5432"
+    logging:
+      driver: "none"
+    volumes:
+      - pgdata_$ENV_NAME:/var/lib/postgresql
+
+volumes:
+  pgdata_$ENV_NAME:
+EOF
+}
+
+generate_compose_sync() {
+  local ENV_NAME="$1"
+  local FILE
+  FILE=$(compose_file_for "$ENV_NAME")
+
+  mkdir -p "$COMPOSE_DIR"
+
+  cat <<EOF > "$FILE"
+# Generated docker-compose file for $ENV_NAME
+services:
+  postgresql_$ENV_NAME:
+    image: postgres:latest
+    environment:
+      POSTGRES_USER: $LOCAL_POSTGRES_USER
+      POSTGRES_PASSWORD: $LOCAL_POSTGRES_PASSWORD
+      POSTGRES_DB: $LOCAL_POSTGRES_DB
+    ports:
+      - "$LOCAL_PORT:5432"
+    logging:
+      driver: "none"
+    volumes:
+      - pgdata_$ENV_NAME:/var/lib/postgresql
+
+  postgresql_worker_$ENV_NAME:
+    image: postgres:latest
+    extra_hosts:
+      - "localhost:host-gateway"
+    command: >
+      bash -c "
+        until pg_isready -h postgresql_$ENV_NAME -U $LOCAL_POSTGRES_USER; do
+          echo waiting for postgres;
+          sleep 2;
+        done;
+
+        echo 'Restoring database from remote...';
+        PGPASSWORD=$REMOTE_POSTGRES_PASSWORD pg_dump -h $REMOTE_POSTGRES_HOST -U $REMOTE_POSTGRES_USER $REMOTE_POSTGRES_DB | \
+        PGPASSWORD=$LOCAL_POSTGRES_PASSWORD psql -h postgresql_$ENV_NAME -U $LOCAL_POSTGRES_USER $LOCAL_POSTGRES_DB;
+
+        if [ \\\$? -eq 0 ]; then
+          echo 'Database restoration complete.';
+        else
+          echo 'Database restoration failed.';
+        fi
+
+        exit;"
+
+volumes:
+  pgdata_$ENV_NAME:
+EOF
+}
+
+# --- Commands ---
+
+cmd_sync() {
+  local TARGET_ENV="$1"
+  require_env "sync" "$TARGET_ENV"
+  source_env_file "$TARGET_ENV"
+
+  local FILE PROJECT
+  FILE=$(compose_file_for "$TARGET_ENV")
+  PROJECT=$(project_name_for "$TARGET_ENV")
+
+  generate_compose_sync "$TARGET_ENV"
+  echo "Syncing $TARGET_ENV on port $LOCAL_PORT..."
+  docker-compose -p "$PROJECT" -f "$FILE" down
+  docker-compose -p "$PROJECT" -f "$FILE" up
+}
+
+cmd_start() {
+  local TARGET_ENV="$1"
+  require_env "start" "$TARGET_ENV"
+  source_env_file "$TARGET_ENV"
+
+  local FILE PROJECT
+  FILE=$(compose_file_for "$TARGET_ENV")
+  PROJECT=$(project_name_for "$TARGET_ENV")
+
+  generate_compose_start "$TARGET_ENV"
+  echo "Starting $TARGET_ENV on port $LOCAL_PORT..."
+  docker-compose -p "$PROJECT" -f "$FILE" up -d
+  echo "$TARGET_ENV is running on port $LOCAL_PORT."
+}
+
+cmd_stop() {
+  local TARGET_ENV="$1"
+  require_env "stop" "$TARGET_ENV"
+  source_env_file "$TARGET_ENV"
+
+  local FILE PROJECT
+  FILE=$(compose_file_for "$TARGET_ENV")
+  PROJECT=$(project_name_for "$TARGET_ENV")
+
+  docker-compose -p "$PROJECT" -f "$FILE" down
+  echo "$TARGET_ENV stopped."
+}
+
+cmd_status() {
+  printf "%-25s %-10s %-10s\n" "ENVIRONMENT" "PORT" "STATUS"
+  printf "%-25s %-10s %-10s\n" "---" "---" "---"
+
+  for f in $ENVS_DIR/.env-*; do
+    [ -f "$f" ] || continue
+    ENV_NAME=$(basename "$f" | sed 's/\.env-//')
+    PROJECT=$(project_name_for "$ENV_NAME")
+
+    LOCAL_PORT=""
+    set -a
+    source "$f"
+    set +a
+
+    PORT="${LOCAL_PORT:-?}"
+
+    RUNNING=$(docker ps --filter "label=com.docker.compose.project=$PROJECT" --filter "status=running" -q 2>/dev/null)
+    if [ -n "$RUNNING" ]; then
+      STATUS="running"
+    else
+      STATUS="stopped"
+    fi
+
+    printf "%-25s %-10s %-10s\n" "$ENV_NAME" "$PORT" "$STATUS"
+  done
+
+  # Check for orphaned projects
+  ORPHANS=""
+  if [ -d "$COMPOSE_DIR" ]; then
+    for cf in $COMPOSE_DIR/docker-compose-*.yml; do
+      [ -f "$cf" ] || continue
+      COMP_ENV=$(basename "$cf" | sed 's/docker-compose-//;s/\.yml//')
+      if [ ! -f "$ENVS_DIR/.env-$COMP_ENV" ]; then
+        PROJECT=$(project_name_for "$COMP_ENV")
+        RUNNING=$(docker ps --filter "label=com.docker.compose.project=$PROJECT" -q 2>/dev/null)
+        if [ -n "$RUNNING" ]; then
+          ORPHANS="$ORPHANS  $COMP_ENV (containers still running)\n"
+        fi
+      fi
+    done
+  fi
+
+  if [ -n "$ORPHANS" ]; then
+    echo ""
+    echo "Orphaned projects (env file removed but containers still exist):"
+    printf "$ORPHANS"
+    echo "Run './db-syncer clean' to stop and remove them."
+  fi
+}
+
+cmd_clean() {
+  if [ ! -d "$COMPOSE_DIR" ]; then
+    echo "Nothing to clean."
+    return
+  fi
+
+  CLEANED=0
+  for cf in $COMPOSE_DIR/docker-compose-*.yml; do
+    [ -f "$cf" ] || continue
+    COMP_ENV=$(basename "$cf" | sed 's/docker-compose-//;s/\.yml//')
+    if [ ! -f "$ENVS_DIR/.env-$COMP_ENV" ]; then
+      PROJECT=$(project_name_for "$COMP_ENV")
+      echo "Cleaning orphaned project: $COMP_ENV"
+      docker-compose -p "$PROJECT" -f "$cf" down 2>/dev/null
+      rm -f "$cf"
+      CLEANED=$((CLEANED + 1))
+    fi
+  done
+
+  if [ $CLEANED -eq 0 ]; then
+    echo "Nothing to clean."
+  else
+    echo "Cleaned $CLEANED orphaned project(s)."
+  fi
+}
+
+cmd_help() {
+  cat <<EOF
+db-syncer - PostgreSQL database synchronization tool
+
+Usage: ./db-syncer <command> <env>
+
+Commands:
+  sync <env>      Sync a remote database into a local PostgreSQL instance.
+  start <env>     Start a local PostgreSQL instance (uses previously synced data).
+  stop <env>      Stop a local PostgreSQL instance.
+  status          Show the status of all environments.
+  clean           Stop and remove orphaned projects (from renamed/deleted env files).
+  help            Show this help message.
+
+Examples:
+  ./db-syncer sync evaluator    # Sync the 'evaluator' environment
+  ./db-syncer start evaluator   # Start evaluator's PostgreSQL on its port
+  ./db-syncer stop evaluator    # Stop evaluator's PostgreSQL
+  ./db-syncer status            # Show all environments and their status
+  ./db-syncer clean             # Remove orphaned Docker projects
+EOF
+}
+
+# --- Main ---
+
+COMMAND="${1:-help}"
+shift 2>/dev/null
+
+case "$COMMAND" in
+  sync)   cmd_sync "$1" ;;
+  start)  cmd_start "$1" ;;
+  stop)   cmd_stop "$1" ;;
+  status) cmd_status ;;
+  clean)  cmd_clean ;;
+  help)   cmd_help ;;
+  *)
+    echo "Unknown command: $COMMAND"
+    echo ""
+    cmd_help
+    exit 1
+    ;;
+esac

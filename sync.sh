@@ -4,13 +4,17 @@
 LOCAL_ROOT_USER="root"
 LOCAL_ROOT_PASSWORD="root"
 
-# Define paths and output file
-ENVS_DIR="envs"
-OUTPUT_FILE="docker-compose.yml"
+# Define local port (default: 5432)
+LOCAL_PORT="${LOCAL_PORT:-5432}"
 
-# Function to write the local_postgresql service
+# Define paths and output files
+ENVS_DIR="envs"
+COMPOSE_FILE="docker-compose.yml"
+
+# --- Docker Compose generation helpers ---
+
 write_local_postgresql_service() {
-  cat <<EOF >> "$OUTPUT_FILE"
+  cat <<EOF >> "$COMPOSE_FILE"
 services:
   local_postgresql:
     image: postgres:latest
@@ -19,18 +23,22 @@ services:
       POSTGRES_PASSWORD: $LOCAL_ROOT_PASSWORD
       POSTGRES_DB: $LOCAL_ROOT_USER
     ports:
-      - "5432:5432"
+      - "$LOCAL_PORT:5432"
     logging:
       driver: "none"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:
 
 EOF
 }
 
-# Function to write a dynamic postgresql_worker service
 write_postgresql_worker_service() {
   local ENV_NAME=$1
 
-  cat <<EOF >> "$OUTPUT_FILE"
+  cat <<EOF >> "$COMPOSE_FILE"
   # Service for environment: $ENV_NAME
   postgresql_worker_$ENV_NAME:
     image: postgres:latest
@@ -66,30 +74,99 @@ write_postgresql_worker_service() {
 EOF
 }
 
-# Start writing to the output file
-echo "# Generated docker-compose file" > "$OUTPUT_FILE"
+generate_compose() {
+  local TARGET_ENV="$1"
 
-# Write the local_postgresql service
-write_local_postgresql_service
+  echo "# Generated docker-compose file" > "$COMPOSE_FILE"
+  write_local_postgresql_service
 
-# Loop through each .env file in the envs directory
-for ENV_FILE in $ENVS_DIR/.env-*; do
-  # Extract the environment name from the file name (remove '.env-' prefix)
-  ENV_NAME=$(basename "$ENV_FILE" | sed 's/\.env-//')
+  if [ -n "$TARGET_ENV" ]; then
+    ENV_FILES="$ENVS_DIR/.env-$TARGET_ENV"
+    if [ ! -f "$ENV_FILES" ]; then
+      echo "Error: Environment file $ENV_FILES not found."
+      exit 1
+    fi
+  else
+    ENV_FILES="$ENVS_DIR/.env-*"
+  fi
 
-  # Source the environment variables from the .env file
-  set -a
-  source "$ENV_FILE"
-  set +a
+  for ENV_FILE in $ENV_FILES; do
+    ENV_NAME=$(basename "$ENV_FILE" | sed 's/\.env-//')
+    set -a
+    source "$ENV_FILE"
+    set +a
+    write_postgresql_worker_service "$ENV_NAME"
+    echo "Added service for $ENV_NAME"
+  done
+}
 
-  # Write the postgresql_worker service for each environment
-  write_postgresql_worker_service "$ENV_NAME"
+# --- Commands ---
 
-  echo "Added service for $ENV_NAME using $ENV_FILE"
-done
+cmd_sync() {
+  local TARGET_ENV="$1"
+  generate_compose "$TARGET_ENV"
+  echo "Starting sync..."
+  docker-compose -f "$COMPOSE_FILE" down
+  docker-compose -f "$COMPOSE_FILE" up
+}
 
-echo "All services added to $OUTPUT_FILE successfully."
+cmd_start() {
+  echo "# Generated docker-compose file" > "$COMPOSE_FILE"
+  write_local_postgresql_service
+  echo "Starting local PostgreSQL server..."
+  docker-compose -f "$COMPOSE_FILE" up -d
+  echo "PostgreSQL is running on port $LOCAL_PORT."
+}
 
-# Start the services using docker-compose in the foreground
-docker-compose -f "$OUTPUT_FILE" down
-docker-compose -f "$OUTPUT_FILE" up
+cmd_stop() {
+  docker-compose -f "$COMPOSE_FILE" down
+  echo "Local PostgreSQL server stopped."
+}
+
+cmd_help() {
+  cat <<EOF
+db-syncer - PostgreSQL database synchronization tool
+
+Usage: ./db-syncer <command> [environment]
+
+Commands:
+  sync [env]    Sync databases from remote to local PostgreSQL.
+                If [env] is specified, syncs only that environment.
+                Otherwise syncs all environments in envs/.
+
+  start         Start the local PostgreSQL server (without syncing).
+                Uses previously synced data.
+
+  stop          Stop the local PostgreSQL server.
+
+  help          Show this help message.
+
+Environment variables:
+  LOCAL_PORT    Local port for PostgreSQL (default: 5432).
+
+Examples:
+  ./db-syncer sync              # Sync all environments
+  ./db-syncer sync users        # Sync only the 'users' environment
+  ./db-syncer start             # Start local PostgreSQL server
+  ./db-syncer stop              # Stop local PostgreSQL server
+  LOCAL_PORT=5433 ./db-syncer sync   # Sync using custom port
+EOF
+}
+
+# --- Main ---
+
+COMMAND="${1:-help}"
+shift 2>/dev/null
+
+case "$COMMAND" in
+  sync)   cmd_sync "$1" ;;
+  start)  cmd_start ;;
+  stop)   cmd_stop ;;
+  help)   cmd_help ;;
+  *)
+    echo "Unknown command: $COMMAND"
+    echo ""
+    cmd_help
+    exit 1
+    ;;
+esac

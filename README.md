@@ -33,6 +33,7 @@
     LOCAL_POSTGRES_USER=local_user
     LOCAL_POSTGRES_PASSWORD=local_password
     LOCAL_POSTGRES_DB=local_db
+    LOCAL_PORT=5444
     REMOTE_POSTGRES_HOST=remote.host.com
     REMOTE_POSTGRES_USER=remote_user
     REMOTE_POSTGRES_PASSWORD=remote_password
@@ -41,8 +42,34 @@
 
 3. **Run the Script** ▶️:
 
+   Sync a specific environment (pulls remote DB into local PostgreSQL):
+
    ```bash
-   sh ./sync.sh
+   ./db-syncer sync evaluator
+   ```
+
+   Start an environment's PostgreSQL server (uses previously synced data):
+
+   ```bash
+   ./db-syncer start evaluator
+   ```
+
+   Stop an environment's PostgreSQL server:
+
+   ```bash
+   ./db-syncer stop evaluator
+   ```
+
+   Check which environments are running:
+
+   ```bash
+   ./db-syncer status
+   ```
+
+   Show help:
+
+   ```bash
+   ./db-syncer help
    ```
 
 4. **Monitor and Access** 👀: The synchronization process will run in the foreground. Access the synced data in your local PostgreSQL database.
