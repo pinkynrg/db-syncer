@@ -66,6 +66,12 @@
    ./db-syncer status
    ```
 
+   Clean up orphaned Docker projects (from renamed or deleted env files):
+
+   ```bash
+   ./db-syncer clean
+   ```
+
    Show help:
 
    ```bash
