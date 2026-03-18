@@ -105,8 +105,9 @@ generate_compose() {
 cmd_sync() {
   local TARGET_ENV="$1"
   generate_compose "$TARGET_ENV"
+  echo "Destroying existing database..."
+  docker-compose -f "$COMPOSE_FILE" down -v
   echo "Starting sync..."
-  docker-compose -f "$COMPOSE_FILE" down
   docker-compose -f "$COMPOSE_FILE" up
 }
 

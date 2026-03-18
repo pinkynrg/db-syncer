@@ -151,7 +151,7 @@ cmd_sync() {
 
   generate_compose_sync "$TARGET_ENV"
   echo "Syncing $TARGET_ENV on port $LOCAL_PORT..."
-  docker-compose -p "$PROJECT" -f "$FILE" down
+  docker-compose -p "$PROJECT" -f "$FILE" down -v
   docker-compose -p "$PROJECT" -f "$FILE" up
 }
 
